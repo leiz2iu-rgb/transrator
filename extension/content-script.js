@@ -22,13 +22,128 @@
 
   const ORIGINAL_ATTRIBUTE = 'data-ai-original-text';
   const STATUS_ATTRIBUTE = 'data-ai-translation-status';
+  const PROCESS_INTERVAL_MS = 3000;
+
+  const OUTGOING_KEYWORDS = [
+    'self',
+    'me',
+    'seller',
+    'outgoing',
+    'right',
+    'mine',
+    'own',
+    'user',
+    'my'
+  ];
+
+  const INCOMING_KEYWORDS = ['incoming', 'buyer', 'left', 'other', 'friend'];
+
+  function textIncludesKeyword(text, keywords) {
+    const lower = text.toLowerCase();
+    return keywords.some((keyword) => lower.includes(keyword));
+  }
+
+  function isLikelyOutgoingFromAttributes(element) {
+    if (!element) {
+      return false;
+    }
+
+    if (element.getAttribute('data-is-self') === 'true') {
+      return true;
+    }
+
+    const classText = element.className || '';
+    const roleText = element.getAttribute('role') || '';
+    const ariaLabel = element.getAttribute('aria-label') || '';
+    const dataOwner = element.getAttribute('data-owner') || '';
+    const combined = `${classText} ${roleText} ${ariaLabel} ${dataOwner}`;
+
+    return textIncludesKeyword(combined, OUTGOING_KEYWORDS);
+  }
+
+  function isLikelyIncomingFromAttributes(element) {
+    if (!element) {
+      return false;
+    }
+
+    if (element.getAttribute('data-is-self') === 'false') {
+      return true;
+    }
+
+    const classText = element.className || '';
+    const ariaLabel = element.getAttribute('aria-label') || '';
+    const dataFrom = element.getAttribute('data-from') || '';
+    const combined = `${classText} ${ariaLabel} ${dataFrom}`;
+
+    return textIncludesKeyword(combined, INCOMING_KEYWORDS);
+  }
+
+  function isRightAligned(element) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') {
+      return false;
+    }
+
+    const bubbleRect = element.getBoundingClientRect();
+    let container = element.closest('.message-list, .chat-content, .chat-messages, .chat-thread');
+    if (!container) {
+      container = element.parentElement;
+    }
+
+    if (!container || typeof container.getBoundingClientRect !== 'function') {
+      return false;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const containerCenter = containerRect.left + containerRect.width / 2;
+
+    return bubbleRect.left >= containerCenter;
+  }
+
+  function getMessageContainer(element) {
+    if (!element) {
+      return null;
+    }
+
+    return (
+      element.closest('[data-testid="chat-message"], .chat-message, .message-item, .bubble, .chat-content, .shopee-chat-message') ||
+      element
+    );
+  }
+
+  function isIncomingMessage(element) {
+    if (!element) {
+      return false;
+    }
+
+    const container = getMessageContainer(element);
+
+    if (isLikelyOutgoingFromAttributes(element) || isLikelyOutgoingFromAttributes(container)) {
+      return false;
+    }
+
+    if (isLikelyIncomingFromAttributes(element) || isLikelyIncomingFromAttributes(container)) {
+      return true;
+    }
+
+    return !isRightAligned(container);
+  }
 
   function findMessageElements() {
     const elements = new Set();
     MESSAGE_SELECTORS.forEach((selector) => {
       document.querySelectorAll(selector).forEach((el) => {
-        if (el && el.innerText && el.innerText.trim().length > 0) {
-          elements.add(el);
+        if (!el || !el.innerText || el.innerText.trim().length === 0) {
+          return;
+        }
+
+        const container = getMessageContainer(el);
+
+        if (!isIncomingMessage(container)) {
+          return;
+        }
+
+        if (container && container.innerText && container.innerText.trim().length > 0) {
+          elements.add(container);
         }
       });
     });
@@ -60,7 +175,8 @@
       return;
     }
 
-    if (storedOriginal === currentText && messageElement.getAttribute(STATUS_ATTRIBUTE) === 'done') {
+    const status = messageElement.getAttribute(STATUS_ATTRIBUTE);
+    if (storedOriginal === currentText && (status === 'done' || status === 'skipped')) {
       return;
     }
 
@@ -69,9 +185,12 @@
 
     try {
       const { translatedText, detectedSource } = await window.TranslatorService.translateText(originalText, 'ja');
-      if (!translatedText) {
-        translationContainer.textContent = '';
-        messageElement.setAttribute(STATUS_ATTRIBUTE, 'done');
+      const isJapanese = detectedSource && detectedSource.startsWith('ja');
+      if (!translatedText || isJapanese) {
+        if (translationContainer && translationContainer.parentNode) {
+          translationContainer.remove();
+        }
+        messageElement.setAttribute(STATUS_ATTRIBUTE, 'skipped');
         messageElement.setAttribute(ORIGINAL_ATTRIBUTE, originalText);
         return;
       }
@@ -204,6 +323,7 @@
     observeMessages();
     attachMicrophone();
     observeInputArea();
+    setInterval(processMessages, PROCESS_INTERVAL_MS);
   }
 
   if (document.readyState === 'loading') {
