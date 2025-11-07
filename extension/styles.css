@@ -1,11 +1,9 @@
 .ai-translation {
-  margin-top: 4px;
-  padding: 4px 6px;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
   font-size: 12px;
   color: #202020;
-  line-height: 1.4;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .ai-translation[data-source-language]::before {
@@ -53,4 +51,64 @@
   100% {
     box-shadow: 0 0 0 0 rgba(213, 0, 0, 0);
   }
+}
+
+.ai-translation-wrapper {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid #ff5722;
+  background: rgba(255, 87, 34, 0.08);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-translation-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ai-translation-toggle {
+  border: none;
+  background: transparent;
+  color: #ff5722;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.ai-translation-toggle:hover,
+.ai-translation-toggle:focus {
+  color: #e64a19;
+}
+
+.ai-original-text {
+  display: none;
+  font-size: 12px;
+  color: #555;
+  line-height: 1.4;
+}
+
+.ai-original-text::before {
+  content: '原文: ';
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.ai-translation-wrapper--show-original .ai-translation {
+  display: none;
+}
+
+.ai-translation-wrapper--show-original .ai-original-text {
+  display: block;
+}
+
+.ai-translation-wrapper--pending .ai-translation {
+  opacity: 0.6;
+}
+
+.ai-translation-wrapper--error .ai-translation {
+  color: #d32f2f;
 }

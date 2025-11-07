@@ -1,17 +1,38 @@
 (function () {
-  const state = {
-    lastDetectedLanguage: 'en'
-  };
+  const MESSAGE_LIST_SELECTORS = [
+    '[data-testid="chat-message-list"]',
+    '[data-testid="message-list"]',
+    '[data-testid="chat-room"]',
+    '.chatroom-message-list',
+    '.message-list',
+    '.chat-messages',
+    '.chat-thread',
+    '.shopee-chatroom__messages',
+    '.stardust-chat-room__messages'
+  ];
 
-  const MESSAGE_SELECTORS = [
+  const MESSAGE_ITEM_SELECTORS = [
     '[data-testid="chat-message"]',
+    '[data-testid="message-item"]',
     '.chat-message',
     '.message-item',
     '.bubble',
     '.chat-content',
     '.shopee-chat-message',
+    '.chat-message__text'
+  ];
+
+  const MESSAGE_TEXT_SELECTORS = [
+    '[data-testid="message-text"]',
+    '.chat-message-text',
+    '.chat-bubble__text',
+    '.message-text',
+    '.bubble-text',
+    '.shopee-chat-message__bubble',
+    '.chat-content',
+    '.chat-bubble',
     '.chat-message__text',
-    '.message-list .text'
+    '.chat-message'
   ];
 
   const INPUT_SELECTORS = [
@@ -23,202 +44,476 @@
   const ORIGINAL_ATTRIBUTE = 'data-ai-original-text';
   const STATUS_ATTRIBUTE = 'data-ai-translation-status';
   const PROCESS_INTERVAL_MS = 3000;
+  const THREAD_CHECK_INTERVAL_MS = 2000;
 
-  const OUTGOING_KEYWORDS = [
-    'self',
-    'me',
-    'seller',
-    'outgoing',
-    'right',
-    'mine',
-    'own',
-    'user',
-    'my'
-  ];
+  const MESSAGE_ITEM_SELECTOR = MESSAGE_ITEM_SELECTORS.join(', ');
 
-  const INCOMING_KEYWORDS = ['incoming', 'buyer', 'left', 'other', 'friend'];
+  const state = {
+    lastDetectedLanguage: 'en',
+    messageList: null,
+    messageObserver: null,
+    listObserver: null,
+    rescanTimer: null,
+    threadTimer: null,
+    currentThreadKey: null
+  };
 
-  function textIncludesKeyword(text, keywords) {
-    const lower = text.toLowerCase();
-    return keywords.some((keyword) => lower.includes(keyword));
+  const pendingRequests = new Map();
+
+  function getThreadKey() {
+    return `${location.pathname}::${location.search}`;
   }
 
-  function isLikelyOutgoingFromAttributes(element) {
-    if (!element) {
-      return false;
-    }
-
-    if (element.getAttribute('data-is-self') === 'true') {
-      return true;
-    }
-
-    const classText = element.className || '';
-    const roleText = element.getAttribute('role') || '';
-    const ariaLabel = element.getAttribute('aria-label') || '';
-    const dataOwner = element.getAttribute('data-owner') || '';
-    const combined = `${classText} ${roleText} ${ariaLabel} ${dataOwner}`;
-
-    return textIncludesKeyword(combined, OUTGOING_KEYWORDS);
+  function matchesMessageSelector(element) {
+    return MESSAGE_ITEM_SELECTORS.some((selector) => {
+      try {
+        return element.matches(selector);
+      } catch (error) {
+        return false;
+      }
+    });
   }
 
-  function isLikelyIncomingFromAttributes(element) {
-    if (!element) {
-      return false;
-    }
-
-    if (element.getAttribute('data-is-self') === 'false') {
-      return true;
-    }
-
-    const classText = element.className || '';
-    const ariaLabel = element.getAttribute('aria-label') || '';
-    const dataFrom = element.getAttribute('data-from') || '';
-    const combined = `${classText} ${ariaLabel} ${dataFrom}`;
-
-    return textIncludesKeyword(combined, INCOMING_KEYWORDS);
-  }
-
-  function isRightAligned(element) {
-    if (!element || typeof element.getBoundingClientRect !== 'function') {
-      return false;
-    }
-
-    const bubbleRect = element.getBoundingClientRect();
-    let container = element.closest('.message-list, .chat-content, .chat-messages, .chat-thread');
-    if (!container) {
-      container = element.parentElement;
-    }
-
-    if (!container || typeof container.getBoundingClientRect !== 'function') {
-      return false;
-    }
-
-    const containerRect = container.getBoundingClientRect();
-    const containerCenter = containerRect.left + containerRect.width / 2;
-
-    return bubbleRect.left >= containerCenter;
-  }
-
-  function getMessageContainer(element) {
-    if (!element) {
+  function getClosestMessageElement(node) {
+    if (!(node instanceof HTMLElement)) {
       return null;
     }
 
-    return (
-      element.closest('[data-testid="chat-message"], .chat-message, .message-item, .bubble, .chat-content, .shopee-chat-message') ||
-      element
-    );
+    if (matchesMessageSelector(node)) {
+      return node;
+    }
+
+    try {
+      return node.closest(MESSAGE_ITEM_SELECTOR);
+    } catch (error) {
+      return null;
+    }
   }
 
-  function isIncomingMessage(element) {
-    if (!element) {
-      return false;
-    }
-
-    const container = getMessageContainer(element);
-
-    if (isLikelyOutgoingFromAttributes(element) || isLikelyOutgoingFromAttributes(container)) {
-      return false;
-    }
-
-    if (isLikelyIncomingFromAttributes(element) || isLikelyIncomingFromAttributes(container)) {
-      return true;
-    }
-
-    return !isRightAligned(container);
+  function findMessageList() {
+    return MESSAGE_LIST_SELECTORS.map((selector) => document.querySelector(selector)).find(Boolean);
   }
 
-  function findMessageElements() {
+  function collectMessageElements(root) {
     const elements = new Set();
-    MESSAGE_SELECTORS.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((el) => {
-        if (!el || !el.innerText || el.innerText.trim().length === 0) {
+
+    MESSAGE_ITEM_SELECTORS.forEach((selector) => {
+      root.querySelectorAll(selector).forEach((element) => {
+        if (!(element instanceof HTMLElement)) {
           return;
         }
 
-        const container = getMessageContainer(el);
-
-        if (!isIncomingMessage(container)) {
+        if (!element.innerText || element.innerText.trim().length === 0) {
           return;
         }
 
-        if (container && container.innerText && container.innerText.trim().length > 0) {
-          elements.add(container);
-        }
+        elements.add(element);
       });
     });
+
     return Array.from(elements);
   }
 
-  function ensureTranslationContainer(messageElement) {
-    let container = messageElement.querySelector('.ai-translation');
-    if (!container) {
-      container = document.createElement('div');
-      container.className = 'ai-translation';
-      messageElement.appendChild(container);
+  function getMessageContentElement(messageElement) {
+    for (const selector of MESSAGE_TEXT_SELECTORS) {
+      let candidate = null;
+      try {
+        if (messageElement.matches(selector)) {
+          candidate = messageElement;
+        }
+      } catch (error) {
+        candidate = null;
+      }
+
+      if (!candidate) {
+        candidate = messageElement.querySelector(selector);
+      }
+
+      if (candidate && candidate instanceof HTMLElement && candidate.innerText && candidate.innerText.trim()) {
+        return candidate;
+      }
     }
-    return container;
+
+    return messageElement instanceof HTMLElement ? messageElement : null;
   }
 
-  function extractOriginalText(element) {
+  function extractTextContent(element) {
+    if (!element) {
+      return '';
+    }
+
     const clone = element.cloneNode(true);
-    clone.querySelectorAll('.ai-translation').forEach((translation) => translation.remove());
-    return clone.innerText.trim();
+    clone.querySelectorAll('.ai-translation-wrapper, .ai-translation, .ai-original-text, .ai-translation-toolbar').forEach((node) =>
+      node.remove()
+    );
+    return clone.innerText ? clone.innerText.trim() : '';
+  }
+
+  function applyVisibilityState(wrapper) {
+    const toggle = wrapper.querySelector('.ai-translation-toggle');
+    const translation = wrapper.querySelector('.ai-translation');
+    const original = wrapper.querySelector('.ai-original-text');
+    const showingOriginal = wrapper.classList.contains('ai-translation-wrapper--show-original');
+
+    if (toggle) {
+      toggle.textContent = showingOriginal ? '訳文を表示' : '原文を表示';
+    }
+
+    if (translation) {
+      translation.setAttribute('aria-hidden', showingOriginal ? 'true' : 'false');
+    }
+
+    if (original) {
+      original.setAttribute('aria-hidden', showingOriginal ? 'false' : 'true');
+    }
+  }
+
+  function ensureTranslationUI(messageElement) {
+    const contentElement = getMessageContentElement(messageElement);
+    if (!contentElement) {
+      return null;
+    }
+
+    let wrapper = contentElement.querySelector('.ai-translation-wrapper');
+    if (wrapper) {
+      return wrapper;
+    }
+
+    wrapper = document.createElement('div');
+    wrapper.className = 'ai-translation-wrapper';
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'ai-translation-toolbar';
+
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'ai-translation-toggle';
+    toggleButton.textContent = '原文を表示';
+    toggleButton.addEventListener('click', () => {
+      wrapper.classList.toggle('ai-translation-wrapper--show-original');
+      applyVisibilityState(wrapper);
+    });
+
+    toolbar.appendChild(toggleButton);
+
+    const translation = document.createElement('div');
+    translation.className = 'ai-translation';
+    translation.setAttribute('aria-live', 'polite');
+
+    const original = document.createElement('div');
+    original.className = 'ai-original-text';
+    original.setAttribute('aria-hidden', 'true');
+
+    wrapper.appendChild(toolbar);
+    wrapper.appendChild(translation);
+    wrapper.appendChild(original);
+    contentElement.appendChild(wrapper);
+
+    applyVisibilityState(wrapper);
+
+    return wrapper;
+  }
+
+  function updateOriginalText(wrapper, originalText) {
+    const original = wrapper.querySelector('.ai-original-text');
+    if (original) {
+      original.textContent = originalText;
+    }
+    applyVisibilityState(wrapper);
+  }
+
+  function setWrapperState(wrapper, stateName) {
+    wrapper.classList.remove('ai-translation-wrapper--pending', 'ai-translation-wrapper--error');
+    if (stateName) {
+      wrapper.classList.add(`ai-translation-wrapper--${stateName}`);
+    }
+  }
+
+  function setPending(wrapper) {
+    const translation = wrapper.querySelector('.ai-translation');
+    if (translation) {
+      translation.textContent = '翻訳中…';
+      translation.removeAttribute('data-source-language');
+    }
+    setWrapperState(wrapper, 'pending');
+    applyVisibilityState(wrapper);
+  }
+
+  function setTranslation(wrapper, translatedText, detectedSource) {
+    const translation = wrapper.querySelector('.ai-translation');
+    if (translation) {
+      translation.textContent = translatedText;
+      if (detectedSource) {
+        translation.setAttribute('data-source-language', detectedSource);
+      } else {
+        translation.removeAttribute('data-source-language');
+      }
+    }
+    setWrapperState(wrapper);
+    applyVisibilityState(wrapper);
+  }
+
+  function setError(wrapper) {
+    const translation = wrapper.querySelector('.ai-translation');
+    if (translation) {
+      translation.textContent = '翻訳に失敗しました';
+      translation.removeAttribute('data-source-language');
+    }
+    setWrapperState(wrapper, 'error');
+    applyVisibilityState(wrapper);
+  }
+
+  function removeTranslationUI(messageElement) {
+    const contentElement = getMessageContentElement(messageElement);
+    if (!contentElement) {
+      return;
+    }
+
+    const wrapper = contentElement.querySelector('.ai-translation-wrapper');
+    if (wrapper && wrapper.parentNode) {
+      wrapper.parentNode.removeChild(wrapper);
+    }
+  }
+
+  function cancelPendingTranslation(messageElement) {
+    const controller = pendingRequests.get(messageElement);
+    if (controller) {
+      controller.abort();
+      pendingRequests.delete(messageElement);
+    }
   }
 
   async function translateMessage(messageElement) {
-    const storedOriginal = messageElement.getAttribute(ORIGINAL_ATTRIBUTE);
-    const currentText = extractOriginalText(messageElement);
-    const originalText = currentText;
+    if (!messageElement || !(messageElement instanceof HTMLElement)) {
+      return;
+    }
 
+    if (!window.TranslatorService || typeof window.TranslatorService.translateText !== 'function') {
+      return;
+    }
+
+    const contentElement = getMessageContentElement(messageElement);
+    if (!contentElement) {
+      return;
+    }
+
+    const originalText = extractTextContent(contentElement);
     if (!originalText) {
       return;
     }
 
+    const storedOriginal = messageElement.getAttribute(ORIGINAL_ATTRIBUTE);
     const status = messageElement.getAttribute(STATUS_ATTRIBUTE);
-    if (storedOriginal === currentText && (status === 'done' || status === 'skipped')) {
+
+    if (storedOriginal === originalText && (status === 'done' || status === 'skipped')) {
       return;
     }
 
-    const translationContainer = ensureTranslationContainer(messageElement);
-    translationContainer.textContent = '翻訳中…';
+    cancelPendingTranslation(messageElement);
+
+    const wrapper = ensureTranslationUI(messageElement);
+    if (!wrapper) {
+      return;
+    }
+
+    messageElement.setAttribute(ORIGINAL_ATTRIBUTE, originalText);
+    messageElement.setAttribute(STATUS_ATTRIBUTE, 'pending');
+    updateOriginalText(wrapper, originalText);
+    setPending(wrapper);
+
+    let controller = null;
+    if (typeof AbortController === 'function') {
+      controller = new AbortController();
+      pendingRequests.set(messageElement, controller);
+    }
 
     try {
-      const { translatedText, detectedSource } = await window.TranslatorService.translateText(originalText, 'ja');
-      const isJapanese = detectedSource && detectedSource.startsWith('ja');
-      if (!translatedText || isJapanese) {
-        if (translationContainer && translationContainer.parentNode) {
-          translationContainer.remove();
-        }
-        messageElement.setAttribute(STATUS_ATTRIBUTE, 'skipped');
-        messageElement.setAttribute(ORIGINAL_ATTRIBUTE, originalText);
+      const { translatedText, detectedSource } = await window.TranslatorService.translateText(
+        originalText,
+        'ja',
+        'auto',
+        controller ? controller.signal : undefined
+      );
+
+      if (messageElement.getAttribute(ORIGINAL_ATTRIBUTE) !== originalText) {
         return;
       }
+
+      const isJapanese = detectedSource && detectedSource.startsWith('ja');
+      const isSameText = translatedText && translatedText.trim() === originalText.trim();
+
+      if (!translatedText || isJapanese || isSameText) {
+        removeTranslationUI(messageElement);
+        messageElement.setAttribute(STATUS_ATTRIBUTE, 'skipped');
+        return;
+      }
+
       state.lastDetectedLanguage = detectedSource || state.lastDetectedLanguage;
-      translationContainer.textContent = translatedText;
-      translationContainer.setAttribute('data-source-language', detectedSource);
+
+      setTranslation(wrapper, translatedText, detectedSource);
       messageElement.setAttribute(STATUS_ATTRIBUTE, 'done');
-      messageElement.setAttribute(ORIGINAL_ATTRIBUTE, originalText);
     } catch (error) {
-      translationContainer.textContent = '翻訳に失敗しました';
+      if (error && error.name === 'AbortError') {
+        return;
+      }
       console.error('Translation failed', error);
+      if (messageElement.getAttribute(ORIGINAL_ATTRIBUTE) !== originalText) {
+        return;
+      }
+      setError(wrapper);
+      messageElement.setAttribute(STATUS_ATTRIBUTE, 'error');
+    } finally {
+      if (controller) {
+        pendingRequests.delete(messageElement);
+      }
     }
   }
 
-  function observeMessages() {
-    const observer = new MutationObserver(() => {
-      processMessages();
-    });
+  function processMessagesFromList(root) {
+    if (!root) {
+      return;
+    }
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    const elements = collectMessageElements(root);
+    elements.forEach((element) => translateMessage(element));
   }
 
-  function processMessages() {
-    const elements = findMessageElements();
-    elements.forEach((el) => translateMessage(el));
+  function processAllMessages() {
+    const root = state.messageList || findMessageList();
+    if (!root) {
+      return;
+    }
+    processMessagesFromList(root);
+  }
+
+  function handleMutations(mutations) {
+    const elements = new Set();
+
+    mutations.forEach((mutation) => {
+      if (mutation.type === 'childList') {
+        mutation.addedNodes.forEach((node) => {
+          const messageElement = getClosestMessageElement(node);
+          if (messageElement) {
+            elements.add(messageElement);
+          }
+
+          if (node instanceof HTMLElement) {
+            node.querySelectorAll(MESSAGE_ITEM_SELECTOR).forEach((child) => {
+              elements.add(child);
+            });
+          }
+        });
+      }
+
+      if (mutation.type === 'characterData' && mutation.target) {
+        const parent = mutation.target.parentElement;
+        const messageElement = parent ? getClosestMessageElement(parent) : null;
+        if (messageElement) {
+          elements.add(messageElement);
+        }
+      }
+    });
+
+    elements.forEach((element) => translateMessage(element));
+  }
+
+  function detachMessageObserver() {
+    if (state.messageObserver) {
+      state.messageObserver.disconnect();
+      state.messageObserver = null;
+    }
+    state.messageList = null;
+  }
+
+  function resetMessageProcessing() {
+    if (state.messageList) {
+      state.messageList.querySelectorAll('.ai-translation-wrapper').forEach((node) => node.remove());
+      state.messageList
+        .querySelectorAll(`[${STATUS_ATTRIBUTE}]`)
+        .forEach((element) => {
+          element.removeAttribute(STATUS_ATTRIBUTE);
+          element.removeAttribute(ORIGINAL_ATTRIBUTE);
+        });
+    }
+
+    detachMessageObserver();
+
+    if (state.listObserver) {
+      state.listObserver.disconnect();
+      state.listObserver = null;
+    }
+
+    if (pendingRequests.size) {
+      pendingRequests.forEach((controller) => {
+        try {
+          controller.abort();
+        } catch (error) {
+          // ignore abort errors
+        }
+      });
+      pendingRequests.clear();
+    }
+
+    if (window.TranslatorService && typeof window.TranslatorService.clearTranslationCache === 'function') {
+      window.TranslatorService.clearTranslationCache();
+    }
+
+    watchForMessageList();
+  }
+
+  function attachToMessageList(list) {
+    if (!list || state.messageList === list) {
+      return;
+    }
+
+    detachMessageObserver();
+
+    state.messageList = list;
+    state.messageObserver = new MutationObserver(handleMutations);
+    state.messageObserver.observe(list, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+
+    processMessagesFromList(list);
+  }
+
+  function watchForMessageList() {
+    const existing = findMessageList();
+    if (existing) {
+      attachToMessageList(existing);
+      return;
+    }
+
+    if (state.listObserver) {
+      return;
+    }
+
+    state.listObserver = new MutationObserver(() => {
+      const list = findMessageList();
+      if (list) {
+        if (state.listObserver) {
+          state.listObserver.disconnect();
+          state.listObserver = null;
+        }
+        attachToMessageList(list);
+      }
+    });
+
+    state.listObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function checkThread() {
+    const nextThreadKey = getThreadKey();
+    if (state.currentThreadKey !== nextThreadKey) {
+      state.currentThreadKey = nextThreadKey;
+      resetMessageProcessing();
+    }
+
+    if (state.messageList && !document.contains(state.messageList)) {
+      resetMessageProcessing();
+    }
   }
 
   function createMicrophoneButton() {
@@ -231,7 +526,9 @@
   }
 
   function setInputValue(inputElement, text) {
-    if (!inputElement) return;
+    if (!inputElement) {
+      return;
+    }
 
     if (inputElement.tagName === 'TEXTAREA' || inputElement.tagName === 'INPUT') {
       inputElement.value = text;
@@ -244,7 +541,6 @@
 
   function attachMicrophone() {
     if (!window.SpeechHelper || !window.SpeechHelper.isSpeechSupported()) {
-      console.warn('Speech recognition is not supported in this browser.');
       return;
     }
 
@@ -278,7 +574,11 @@
 
           try {
             const targetLang = state.lastDetectedLanguage || 'en';
-            const { translatedText } = await window.TranslatorService.translateText(transcript, targetLang, 'ja');
+            const { translatedText } = await window.TranslatorService.translateText(
+              transcript,
+              targetLang,
+              'ja'
+            );
             setInputValue(inputElement, translatedText || transcript);
           } catch (error) {
             console.error('Voice translation failed', error);
@@ -319,11 +619,21 @@
   }
 
   function init() {
-    processMessages();
-    observeMessages();
+    state.currentThreadKey = getThreadKey();
+    watchForMessageList();
+    processAllMessages();
     attachMicrophone();
     observeInputArea();
-    setInterval(processMessages, PROCESS_INTERVAL_MS);
+
+    if (state.rescanTimer) {
+      clearInterval(state.rescanTimer);
+    }
+    state.rescanTimer = setInterval(processAllMessages, PROCESS_INTERVAL_MS);
+
+    if (state.threadTimer) {
+      clearInterval(state.threadTimer);
+    }
+    state.threadTimer = setInterval(checkThread, THREAD_CHECK_INTERVAL_MS);
   }
 
   if (document.readyState === 'loading') {
