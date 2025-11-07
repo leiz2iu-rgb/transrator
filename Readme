@@ -1,2 +1,29 @@
 # Shopee AI Translator
+
 Chrome extension for automatic translation of Shopee chat messages.
+
+## 機能
+- 受信したチャットメッセージを自動で検出し、日本語へ翻訳してメッセージの直下に表示
+- 翻訳元の言語ラベルを表示し、相手が使用している言語を把握
+- チャット入力欄の横にマイクボタンを追加し、日本語で話した内容を音声認識
+- 音声認識した日本語を相手の言語へ翻訳し、入力欄へ自動で挿入
+
+## 仕組み
+- Google Translate の非公式 API (`https://translate.googleapis.com`) を利用してテキスト翻訳と自動言語判定を実施
+- Web Speech API を使用してブラウザ側で日本語音声を文字起こし
+- MutationObserver でチャット画面の DOM 変化を監視し、新着メッセージを逐次翻訳
+
+## セットアップ手順
+1. このリポジトリをクローン、またはダウンロード
+2. Chrome で `chrome://extensions/` を開き、デベロッパーモードを有効化
+3. 「パッケージ化されていない拡張機能を読み込む」をクリックし、`extension/` ディレクトリを選択
+4. Shopee のチャット画面を開くと、自動で翻訳が適用され、入力欄の横にマイクボタンが表示されます
+
+## 注意事項
+- Google Translate の非公式エンドポイントを使用しているため、過度のリクエスト送信は制限や仕様変更の対象になる可能性があります
+- Web Speech API はデスクトップ版 Chrome でのみ動作します。対応ブラウザでご利用ください
+- Shopee のチャット DOM 構造に大きな変更があった場合、メッセージ検出が機能しなくなる可能性があります
+
+## カスタマイズ
+- 対応したい Shopee ドメインがある場合は `extension/manifest.json` の `matches` と `host_permissions` にドメインを追加してください
+- マイクボタンのデザインや表示位置は `extension/styles.css` を編集して変更できます
