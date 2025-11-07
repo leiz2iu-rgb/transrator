@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Shopee AI Translator",
+  "description": "Translate Shopee chat messages and provide voice input translations.",
+  "version": "0.1.0",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.shopee.com/*",
+    "https://*.shopee.tw/*",
+    "https://*.shopee.co.id/*",
+    "https://*.shopee.co.th/*",
+    "https://*.shopee.vn/*",
+    "https://*.shopee.ph/*",
+    "https://*.shopee.sg/*",
+    "https://*.shopee.my/*",
+    "https://*.shopee.com.br/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.shopee.com/*",
+        "https://*.shopee.tw/*",
+        "https://*.shopee.co.id/*",
+        "https://*.shopee.co.th/*",
+        "https://*.shopee.vn/*",
+        "https://*.shopee.ph/*",
+        "https://*.shopee.sg/*",
+        "https://*.shopee.my/*",
+        "https://*.shopee.com.br/*"
+      ],
+      "js": ["translator.js", "speech.js", "content-script.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
