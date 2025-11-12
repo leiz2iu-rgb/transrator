@@ -31,6 +31,7 @@
         "https://*.shopee.sg/*",
         "https://*.shopee.my/*",
         "https://*.shopee.com.br/*"
+        "https://seller.shopee.sg/webchat/conversations"
       ],
       "js": ["translator.js", "speech.js", "content-script.js"],
       "css": ["styles.css"],
