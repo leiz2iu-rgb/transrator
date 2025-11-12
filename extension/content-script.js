@@ -47,6 +47,120 @@
   const THREAD_CHECK_INTERVAL_MS = 2000;
 
   const MESSAGE_ITEM_SELECTOR = MESSAGE_ITEM_SELECTORS.join(', ');
+  const MESSAGE_LIST_SELECTOR = MESSAGE_LIST_SELECTORS.join(', ');
+
+  const OUTGOING_KEYWORDS = [
+    'self',
+    'me',
+    'seller',
+    'outgoing',
+    'right',
+    'mine',
+    'own',
+    'user',
+    'my'
+  ];
+
+  const INCOMING_KEYWORDS = ['incoming', 'buyer', 'left', 'other', 'friend'];
+
+  function textIncludesKeyword(text, keywords) {
+    if (!text) {
+      return false;
+    }
+
+    const lower = text.toLowerCase();
+    return keywords.some((keyword) => lower.includes(keyword));
+  }
+
+  function isLikelyOutgoingFromAttributes(element) {
+    if (!element) {
+      return false;
+    }
+
+    if (element.getAttribute && element.getAttribute('data-is-self') === 'true') {
+      return true;
+    }
+
+    const classText = element.className || '';
+    const roleText = element.getAttribute ? element.getAttribute('role') || '' : '';
+    const ariaLabel = element.getAttribute ? element.getAttribute('aria-label') || '' : '';
+    const dataOwner = element.getAttribute ? element.getAttribute('data-owner') || '' : '';
+    const combined = `${classText} ${roleText} ${ariaLabel} ${dataOwner}`;
+
+    return textIncludesKeyword(combined, OUTGOING_KEYWORDS);
+  }
+
+  function isLikelyIncomingFromAttributes(element) {
+    if (!element) {
+      return false;
+    }
+
+    if (element.getAttribute && element.getAttribute('data-is-self') === 'false') {
+      return true;
+    }
+
+    const classText = element.className || '';
+    const ariaLabel = element.getAttribute ? element.getAttribute('aria-label') || '' : '';
+    const dataFrom = element.getAttribute ? element.getAttribute('data-from') || '' : '';
+    const combined = `${classText} ${ariaLabel} ${dataFrom}`;
+
+    return textIncludesKeyword(combined, INCOMING_KEYWORDS);
+  }
+
+  function getMessageContainer(element) {
+    if (!element) {
+      return null;
+    }
+
+    const container = getClosestMessageElement(element);
+    return container instanceof HTMLElement ? container : null;
+  }
+
+  function isRightAligned(element) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') {
+      return false;
+    }
+
+    const bubbleRect = element.getBoundingClientRect();
+    let container = null;
+
+    try {
+      container = element.closest(MESSAGE_LIST_SELECTOR);
+    } catch (error) {
+      container = null;
+    }
+
+    if (!container) {
+      container = element.parentElement;
+    }
+
+    if (!container || typeof container.getBoundingClientRect !== 'function') {
+      return false;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const containerCenter = containerRect.left + containerRect.width / 2;
+
+    return bubbleRect.left >= containerCenter;
+  }
+
+  function isIncomingMessage(element) {
+    const container = getMessageContainer(element);
+
+    if (!container) {
+      return false;
+    }
+
+    if (isLikelyOutgoingFromAttributes(element) || isLikelyOutgoingFromAttributes(container)) {
+      return false;
+    }
+
+    if (isLikelyIncomingFromAttributes(element) || isLikelyIncomingFromAttributes(container)) {
+      return true;
+    }
+
+    return !isRightAligned(container);
+  }
 
   const state = {
     lastDetectedLanguage: 'en',
@@ -107,7 +221,12 @@
           return;
         }
 
-        elements.add(element);
+        const container = getMessageContainer(element);
+        if (!container || !isIncomingMessage(container)) {
+          return;
+        }
+
+        elements.add(container);
       });
     });
 
@@ -285,6 +404,14 @@
 
   async function translateMessage(messageElement) {
     if (!messageElement || !(messageElement instanceof HTMLElement)) {
+      return;
+    }
+
+    if (!isIncomingMessage(messageElement)) {
+      cancelPendingTranslation(messageElement);
+      removeTranslationUI(messageElement);
+      messageElement.removeAttribute(STATUS_ATTRIBUTE);
+      messageElement.removeAttribute(ORIGINAL_ATTRIBUTE);
       return;
     }
 
